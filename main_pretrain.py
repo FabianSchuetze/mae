@@ -14,18 +14,16 @@ import json
 import os
 import time
 from pathlib import Path
+import matplotlib.pyplot as plt
 import numpy as np
+import wandb
 
 import torch
 import torch.backends.cudnn as cudnn
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-
-import timm
 
 # assert timm.__version__ == "0.3.2"  # version check
-import timm.optim.optim_factory as optim_factory
 
 import util.misc as misc
 from util.itodd_dataset import ItoddDataset
@@ -34,6 +32,68 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 import models_mae
 
 from engine_pretrain import train_one_epoch
+
+
+def run_one_image(x, model):
+
+    def show_image(image, axis, title=''):
+    # image is [H, W, 3]
+        assert image.shape[2] == 3
+        axis.imshow(torch.clip(image * 255, 0, 255).int())
+        axis.set_title(title, fontsize=16)
+        axis.axis('off')
+        return
+
+    # make it a batch-like
+    x = x.unsqueeze(dim=0)
+    # x = torch.einsum('nhwc->nchw', x)
+
+    # run MAE
+    loss, y, mask = model(x.float(), mask_ratio=0.75)
+    y = model.unpatchify(y)
+    y = torch.einsum('nchw->nhwc', y).detach().cpu()
+
+    # visualize the mask
+    mask = mask.detach()
+    mask = mask.unsqueeze(-1).repeat(1, 1, model.patch_embed.patch_size[0]**2 *3)  # (N, H*W, p*p*3)
+    mask = model.unpatchify(mask)  # 1 is removing, 0 is keeping
+    mask = torch.einsum('nchw->nhwc', mask).detach().cpu()
+
+    x = torch.einsum('nchw->nhwc', x)
+
+    # masked image
+    im_masked = x * (1 - mask)
+
+    # MAE reconstruction pasted with visible patches
+    im_paste = x * (1 - mask) + y * mask
+
+    # make the plt figure larger
+
+    fig, ax = plt.subplots(1, 4, figsize=(24, 24))
+    # plt.rcParams['figure.figsize'] = [24, 24]
+    show_image(x[0], ax[0], "original")
+
+    # plt.subplot(1, 4, 2)
+    show_image(im_masked[0], ax[1], "masked")
+
+    # plt.subplot(1, 4, 3)
+    show_image(y[0], ax[2], "reconstruction")
+
+    # plt.subplot(1, 4, 4)
+    show_image(im_paste[0], ax[3], "reconstruction + visible")
+
+    return fig
+
+    # plt.show()
+
+
+def sample_images(model, dataset, device, log_writer):
+    imgs, _ = next(iter(dataset))
+    imgs = imgs.to(device)
+    for img in imgs:
+        fig = run_one_image(img, model)
+        log_writer.log({'images':fig})
+        plt.close('all')
 
 
 def add_weight_decay(model, weight_decay=1e-5, skip_list=()):
@@ -115,6 +175,7 @@ def get_args_parser():
 
 
 def main(args):
+    log_writer = wandb.init(project='mae', dir=args.log_dir)
     # misc.init_distributed_mode(args)
 
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
@@ -143,7 +204,7 @@ def main(args):
     sampler_train = torch.utils.data.RandomSampler(dataset_train)
 
     os.makedirs(args.log_dir, exist_ok=True)
-    log_writer = SummaryWriter(log_dir=args.log_dir)
+    # log_writer = SummaryWriter(log_dir=args.log_dir)
 
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
@@ -152,7 +213,7 @@ def main(args):
         pin_memory=args.pin_mem,
         drop_last=True,
     )
-    
+
     # define the model
     model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
 
@@ -162,7 +223,7 @@ def main(args):
     print("Model = %s" % str(model_without_ddp))
 
     eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
-    
+
     if args.lr is None:  # only base_lr is specified
         args.lr = args.blr * eff_batch_size / 256
 
@@ -190,6 +251,7 @@ def main(args):
             log_writer=log_writer,
             args=args
         )
+
         if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
@@ -197,10 +259,15 @@ def main(args):
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                         'epoch': epoch,}
+        log_writer.log(log_stats)
+
+        if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
+            sample_images(model, data_loader_train, device, log_writer)
+
 
         if args.output_dir:
-            if log_writer is not None:
-                log_writer.flush()
+            # if log_writer is not None:
+                # log_writer.flush()
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
