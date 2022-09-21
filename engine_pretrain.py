@@ -34,7 +34,7 @@ def train_one_epoch(model: torch.nn.Module,
     optimizer.zero_grad()
 
     if log_writer is not None:
-        print('log_dir: {}'.format(log_writer.log_dir))
+        print('log_dir: {}'.format(args.log_dir))
 
     for data_iter_step, (samples, _) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
 
@@ -48,6 +48,7 @@ def train_one_epoch(model: torch.nn.Module,
             loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
 
         loss_value = loss.item()
+        print("Loss: %.3f" %(loss_value))
 
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
@@ -73,7 +74,7 @@ def train_one_epoch(model: torch.nn.Module,
             """
             epoch_1000x = int((data_iter_step / len(data_loader) + epoch) * 1000)
             log_writer.log({'train_loss': loss_value_reduce}, step=epoch_1000x)
-            log_writer.log({'lr', lr}, step=epoch_1000x)
+            log_writer.log({'lr': lr}, step=epoch_1000x)
 
 
     # gather the stats from all processes

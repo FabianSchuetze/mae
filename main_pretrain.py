@@ -35,52 +35,55 @@ from engine_pretrain import train_one_epoch
 
 
 def run_one_image(x, model):
-
+    imagenet_mean = np.array([0.485, 0.456, 0.406])
+    imagenet_std = np.array([0.229, 0.224, 0.225])
     def show_image(image, axis, title=''):
     # image is [H, W, 3]
         assert image.shape[2] == 3
-        axis.imshow(torch.clip(image * 255, 0, 255).int())
+        axis.imshow(torch.clip((image * imagenet_std + imagenet_mean) * 255, 0, 255).int())
         axis.set_title(title, fontsize=16)
         axis.axis('off')
         return
-
+    with torch.no_grad():
     # make it a batch-like
-    x = x.unsqueeze(dim=0)
-    # x = torch.einsum('nhwc->nchw', x)
+        x = x.unsqueeze(dim=0)
+        # x = torch.einsum('nhwc->nchw', x)
 
-    # run MAE
-    loss, y, mask = model(x.float(), mask_ratio=0.75)
-    y = model.unpatchify(y)
-    y = torch.einsum('nchw->nhwc', y).detach().cpu()
+        # run MAE
+        loss, y, mask = model(x.float(), mask_ratio=0.75)
+        y = model.unpatchify(y)
+        y = torch.einsum('nchw->nhwc', y).detach().cpu()
 
-    # visualize the mask
-    mask = mask.detach()
-    mask = mask.unsqueeze(-1).repeat(1, 1, model.patch_embed.patch_size[0]**2 *3)  # (N, H*W, p*p*3)
-    mask = model.unpatchify(mask)  # 1 is removing, 0 is keeping
-    mask = torch.einsum('nchw->nhwc', mask).detach().cpu()
+        # visualize the mask
+        mask = mask.detach()
+        mask = mask.unsqueeze(-1).repeat(1, 1, model.patch_embed.patch_size[0]**2 *3)  # (N, H*W, p*p*3)
+        mask = model.unpatchify(mask)  # 1 is removing, 0 is keeping
+        mask = torch.einsum('nchw->nhwc', mask).detach().cpu()
+        x = x.detach().cpu()
+        y = y.detach().cpu()
 
-    x = torch.einsum('nchw->nhwc', x)
+        x = torch.einsum('nchw->nhwc', x)
 
-    # masked image
-    im_masked = x * (1 - mask)
+        # masked image
+        im_masked = x * (1 - mask)
 
-    # MAE reconstruction pasted with visible patches
-    im_paste = x * (1 - mask) + y * mask
+        # MAE reconstruction pasted with visible patches
+        im_paste = x * (1 - mask) + y * mask
 
-    # make the plt figure larger
+        # make the plt figure larger
 
-    fig, ax = plt.subplots(1, 4, figsize=(24, 24))
-    # plt.rcParams['figure.figsize'] = [24, 24]
-    show_image(x[0], ax[0], "original")
+        fig, ax = plt.subplots(1, 4, figsize=(24, 24))
+        # plt.rcParams['figure.figsize'] = [24, 24]
+        show_image(x[0], ax[0], "original")
 
-    # plt.subplot(1, 4, 2)
-    show_image(im_masked[0], ax[1], "masked")
+        # plt.subplot(1, 4, 2)
+        show_image(im_masked[0], ax[1], "masked")
 
-    # plt.subplot(1, 4, 3)
-    show_image(y[0], ax[2], "reconstruction")
+        # plt.subplot(1, 4, 3)
+        show_image(y[0], ax[2], "reconstruction")
 
-    # plt.subplot(1, 4, 4)
-    show_image(im_paste[0], ax[3], "reconstruction + visible")
+        # plt.subplot(1, 4, 4)
+        show_image(im_paste[0], ax[3], "reconstruction + visible")
 
     return fig
 
@@ -195,7 +198,7 @@ def main(args):
             transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0), interpolation=3),  # 3 is bicubic
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
-            # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
     dataset_train = ItoddDataset(os.path.join(args.data_path), transform=transform_train)
     # dataset_train = datasets.ImageFolder(os.path.join(args.data_path, 'train'), transform=transform_train)
@@ -234,7 +237,6 @@ def main(args):
     print("effective batch size: %d" % eff_batch_size)
 
     # following timm: set wd as 0 for bias and norm layers
-    # breakpoint()
     param_groups = add_weight_decay(model_without_ddp, args.weight_decay)
     optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
     print(optimizer)
