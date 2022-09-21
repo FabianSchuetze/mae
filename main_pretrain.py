@@ -264,7 +264,9 @@ def main(args):
         log_writer.log(log_stats)
 
         if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
+            model.eval()
             sample_images(model, data_loader_train, device, log_writer)
+            model.train()
 
 
         if args.output_dir:
