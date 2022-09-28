@@ -33,6 +33,10 @@ import models_mae
 
 from engine_pretrain import train_one_epoch
 
+# our_means = np.array([0.18093618, 0.19141551, 0.20021472])
+# our_stds = array([0.13555299, 0.13593811, 0.13751954])
+
+
 
 def run_one_image(x, model):
     imagenet_mean = np.array([0.485, 0.456, 0.406])
